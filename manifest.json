@@ -1,0 +1,17 @@
+{
+  "name": "こもれび記録",
+  "short_name": "こもれび",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fff9df",
+  "theme_color": "#e8bd3f",
+  "description": "1週間の活動・気分・ふりかえりと月間目標を記録するアプリ",
+  "orientation": "any",
+  "icons": [
+    {"src":"icons/Icon-192.png","sizes":"192x192","type":"image/png"},
+    {"src":"icons/Icon-512.png","sizes":"512x512","type":"image/png"},
+    {"src":"icons/Icon-maskable-192.png","sizes":"192x192","type":"image/png","purpose":"maskable"},
+    {"src":"icons/Icon-maskable-512.png","sizes":"512x512","type":"image/png","purpose":"maskable"}
+  ]
+}

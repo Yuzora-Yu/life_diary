@@ -1,1 +1,220 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#e8bd3f">
+  <meta name="description" content="1週間の活動・気分・ふりかえりと、月ごとの2つの目標を記録するブラウザアプリ">
+  <title>こもれび記録</title>
+  <link rel="icon" href="favicon.png">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <button class="brand" type="button" data-nav="calendar" aria-label="カレンダーを開く">
+        <span class="brand-mark">木</span>
+        <span><strong>こもれび記録</strong><small>生活のペースを、1日ずつ。</small></span>
+      </button>
+      <div class="save-indicator" id="saveIndicator" aria-live="polite">
+        <span class="save-dot"></span><span id="saveText">保存済み</span>
+      </div>
+    </header>
 
+    <nav class="main-nav" aria-label="メインメニュー">
+      <button class="nav-btn is-active" type="button" data-nav="calendar"><span>▦</span>カレンダー</button>
+      <button class="nav-btn" type="button" data-nav="week"><span>≋</span>週記録</button>
+      <button class="nav-btn" type="button" data-nav="list"><span>☷</span>記録一覧</button>
+      <button class="nav-btn" type="button" data-nav="settings"><span>⚙</span>設定</button>
+    </nav>
+
+    <main id="appMain" tabindex="-1">
+      <section class="view" id="view-week" aria-labelledby="weekTitle">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">WEEKLY RECORD</p>
+            <h1 id="weekTitle">1週間の記録</h1>
+            <p class="subcopy">写真のシートをもとに、AM / PMの活動と気分、1日のふりかえり、2つの目標の結果をまとめて入力できます。</p>
+          </div>
+          <div class="date-switcher" aria-label="週の移動">
+            <button type="button" class="icon-btn" id="prevWeek" aria-label="前の週">‹</button>
+            <button type="button" class="date-label" id="weekLabel"></button>
+            <button type="button" class="icon-btn" id="nextWeek" aria-label="次の週">›</button>
+            <button type="button" class="ghost-btn" id="thisWeek">今週</button>
+          </div>
+        </div>
+
+        <section class="goal-strip" aria-label="この週の月間目標">
+          <div class="goal-strip-head">
+            <div>
+              <span class="section-kicker">MONTHLY GOALS</span>
+              <strong id="weekGoalMonth">今月の目標</strong>
+            </div>
+            <button type="button" class="text-btn" id="editGoalsFromWeek">目標を編集</button>
+          </div>
+          <div class="goal-inline-grid">
+            <div class="goal-inline"><span>①</span><p id="weekGoal1">未設定</p></div>
+            <div class="goal-inline"><span>②</span><p id="weekGoal2">未設定</p></div>
+          </div>
+          <p class="goal-note" id="crossMonthNote" hidden>この週は月をまたいでいます。各日の「目標結果」は、その日が属する月の目標に紐づきます。</p>
+        </section>
+
+        <div class="week-grid-wrap">
+          <div class="week-grid" id="weekGrid"></div>
+        </div>
+      </section>
+
+      <section class="view is-visible" id="view-calendar" aria-labelledby="calendarTitle">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">CALENDAR</p>
+            <h1 id="calendarTitle">カレンダー</h1>
+            <p class="subcopy">日付を選ぶと、その日の内容を閲覧・編集できます。週記録で入力した内容も同じデータとして表示されます。</p>
+          </div>
+          <div class="date-switcher" aria-label="月の移動">
+            <button type="button" class="icon-btn" id="prevMonth" aria-label="前の月">‹</button>
+            <button type="button" class="date-label" id="monthLabel"></button>
+            <button type="button" class="icon-btn" id="nextMonth" aria-label="次の月">›</button>
+            <button type="button" class="ghost-btn" id="thisMonth">今月</button>
+          </div>
+        </div>
+
+        <div class="calendar-layout">
+          <section class="calendar-card" aria-label="月間カレンダー">
+            <div class="weekday-row" aria-hidden="true"><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span class="sat">土</span><span class="sun">日</span></div>
+            <div class="calendar-grid" id="calendarGrid"></div>
+          </section>
+
+          <aside class="day-editor-panel" id="calendarDayPanel" aria-label="選択日の記録"></aside>
+
+          <section class="month-goals-card">
+            <div class="section-title-row">
+              <div>
+                <span class="section-kicker">MONTHLY GOALS</span>
+                <h2>この月の目標</h2>
+              </div>
+              <span class="autosave-caption">自動保存</span>
+            </div>
+            <div class="month-goal-inputs">
+              <label><span>目標 ①</span><input id="monthGoal1" type="text" maxlength="120" placeholder="例：1日1回、食器を2つ洗う"></label>
+              <label><span>目標 ②</span><input id="monthGoal2" type="text" maxlength="120" placeholder="例：1日1,000歩あるく"></label>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-list" aria-labelledby="listTitle">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">RECORDS</p>
+            <h1 id="listTitle">記録一覧</h1>
+            <p class="subcopy">どちらの入力画面から記録しても、ここに日付順でまとまります。</p>
+          </div>
+          <div class="list-controls">
+            <label class="select-label">表示月<select id="listMonthFilter"></select></label>
+            <label class="search-label"><span>検索</span><input id="listSearch" type="search" placeholder="活動・ふりかえり・目標結果"></label>
+          </div>
+        </div>
+        <div class="record-list" id="recordList"></div>
+      </section>
+
+      <section class="view" id="view-settings" aria-labelledby="settingsTitle">
+        <div class="page-head">
+          <div>
+            <p class="eyebrow">SETTINGS & BACKUP</p>
+            <h1 id="settingsTitle">設定・バックアップ</h1>
+            <p class="subcopy">記録は端末内に自動保存します。加えて、別ファイルへのバックアップを定期的に残せます。</p>
+          </div>
+        </div>
+
+        <div class="settings-grid">
+          <section class="settings-card">
+            <div class="settings-icon">保</div>
+            <div>
+              <h2>保存状態</h2>
+              <p id="storageSummary">保存領域を確認しています…</p>
+              <dl class="status-list">
+                <div><dt>主保存</dt><dd id="primaryStorageStatus">IndexedDB</dd></div>
+                <div><dt>予備コピー</dt><dd id="shadowStorageStatus">localStorage</dd></div>
+                <div><dt>最終保存</dt><dd id="lastSavedStatus">—</dd></div>
+              </dl>
+              <button type="button" class="secondary-btn" id="requestPersistentStorage">永続ストレージを依頼</button>
+              <p class="fineprint">対応ブラウザでは、OSやブラウザによる自動削除の対象になりにくい保存領域を依頼します。</p>
+            </div>
+          </section>
+
+          <section class="settings-card">
+            <div class="settings-icon">出</div>
+            <div>
+              <h2>バックアップを書き出す</h2>
+              <p>すべての記録・月間目標・設定を1つのJSONファイルに保存します。機種変更やブラウザの初期化前にもおすすめです。</p>
+              <div class="button-row">
+                <button type="button" class="primary-btn" id="exportBackup">バックアップ出力</button>
+                <button type="button" class="secondary-btn" id="exportCsv">記録一覧をCSV出力</button>
+              </div>
+              <p class="fineprint" id="lastBackupText">バックアップ出力履歴：まだありません</p>
+            </div>
+          </section>
+
+          <section class="settings-card">
+            <div class="settings-icon">入</div>
+            <div>
+              <h2>バックアップを読み込む</h2>
+              <p>このアプリから出力したJSONを読み込みます。既存データに「追加・更新」するか、すべて「置き換え」るか選べます。</p>
+              <div class="import-row">
+                <select id="importMode" aria-label="読み込み方法">
+                  <option value="merge">追加・更新（推奨）</option>
+                  <option value="replace">現在のデータを置き換え</option>
+                </select>
+                <label class="file-button">ファイルを選ぶ<input id="importBackup" type="file" accept="application/json,.json"></label>
+              </div>
+              <p class="fineprint">置き換えを選んだ場合も、読み込み直前の状態を端末内の復元ポイントとして保存します。</p>
+            </div>
+          </section>
+
+          <section class="settings-card">
+            <div class="settings-icon">復</div>
+            <div>
+              <h2>端末内の復元ポイント</h2>
+              <p>一定時間ごと・バックアップ読込前に、自動で世代保存します。誤操作時の保険として使えます。</p>
+              <div id="snapshotList" class="snapshot-list"></div>
+              <button type="button" class="secondary-btn" id="createSnapshot">今すぐ復元ポイントを作る</button>
+            </div>
+          </section>
+        </div>
+
+        <section class="danger-zone">
+          <div><h2>データを初期化</h2><p>端末内の記録と目標をすべて削除します。先にバックアップ出力することをおすすめします。</p></div>
+          <button type="button" class="danger-btn" id="resetData">すべての記録を削除</button>
+        </section>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+
+  <template id="dailyFieldsTemplate">
+    <div class="daily-fields">
+      <div class="activity-block">
+        <div class="activity-heading"><strong>AMの活動と気分</strong><span>0〜100</span></div>
+        <textarea data-field="amActivity" rows="2" maxlength="300" placeholder="例：二度寝、朝食、片づけ"></textarea>
+        <div class="mood-row"><input data-field="amMood" type="range" min="0" max="100" step="5"><input data-field="amMoodNumber" class="mood-number" type="number" min="0" max="100" step="5" inputmode="numeric"><span>点</span></div>
+      </div>
+      <div class="activity-block">
+        <div class="activity-heading"><strong>PMの活動と気分</strong><span>0〜100</span></div>
+        <textarea data-field="pmActivity" rows="2" maxlength="300" placeholder="例：買い物、プレイワーク、友人宅"></textarea>
+        <div class="mood-row"><input data-field="pmMood" type="range" min="0" max="100" step="5"><input data-field="pmMoodNumber" class="mood-number" type="number" min="0" max="100" step="5" inputmode="numeric"><span>点</span></div>
+      </div>
+      <label class="reflection-field"><span>どんな1日だった？</span><textarea data-field="reflection" rows="3" maxlength="600" placeholder="その日の出来事や感じたこと"></textarea></label>
+      <div class="goal-results">
+        <label><span class="goal-result-label" data-goal-label="1">① 目標1の結果</span><textarea data-field="goal1Result" rows="2" maxlength="300" placeholder="できたこと・できなかったこと"></textarea></label>
+        <label><span class="goal-result-label" data-goal-label="2">② 目標2の結果</span><textarea data-field="goal2Result" rows="2" maxlength="300" placeholder="歩数など、結果を自由に"></textarea></label>
+      </div>
+    </div>
+  </template>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

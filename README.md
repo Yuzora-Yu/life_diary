@@ -52,3 +52,9 @@ python3 -m http.server 8000
 - touchmove の preventDefault を廃止し、Chrome の Intervention 警告を解消
 - 週目標見出しの改行と「目標を編集」ボタンの見た目を改善
 - 「目標を編集」からカレンダー下部の週目標入力欄へ自動スクロール
+
+## v1.2.2
+- 設定画面に「アプリを更新」ボタンを追加。
+- 更新時は IndexedDB / localStorage の記録データを残したまま、アプリ用 Cache Storage だけを最新版へ入れ替えます。
+- 更新ファイルはすべて取得成功してからキャッシュを置き換えるため、通信失敗時は既存のオフラインキャッシュを保持します。
+- Service Worker 自体の更新確認では HTTP キャッシュを使わないようにしました。

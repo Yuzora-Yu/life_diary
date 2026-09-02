@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.2.2';
 const SCHEMA_VERSION = 2;
 const DB_NAME = 'komorebi-record-db';
 const DB_VERSION = 1;
@@ -763,6 +763,8 @@ async function updateStorageUi() {
 
 async function renderSettings() {
   await updateStorageUi();
+  const appUpdateStatus = $('#appUpdateStatus');
+  if (appUpdateStatus) appUpdateStatus.textContent = `現在のバージョン：v${APP_VERSION}。記録データは更新時も保持されます。`;
   const weekStartSelect = $('#weekStartSelect');
   if (weekStartSelect) weekStartSelect.value = String(getWeekStartsOn());
   const list = $('#snapshotList');
@@ -908,6 +910,77 @@ async function restoreSnapshot(key) {
   }
 }
 
+function requestFreshAppCache(worker) {
+  return new Promise((resolve, reject) => {
+    if (!worker) {
+      reject(new Error('Service Worker がまだ有効になっていません。'));
+      return;
+    }
+
+    const channel = new MessageChannel();
+    const timer = window.setTimeout(() => reject(new Error('更新処理がタイムアウトしました。')), 20000);
+    channel.port1.onmessage = event => {
+      window.clearTimeout(timer);
+      if (event.data?.ok) resolve(event.data);
+      else reject(new Error(event.data?.message || '最新版の取得に失敗しました。'));
+    };
+    worker.postMessage({ type: 'REFRESH_APP_CACHE' }, [channel.port2]);
+  });
+}
+
+async function updateApp() {
+  const button = $('#updateApp');
+  const status = $('#appUpdateStatus');
+  const originalText = button?.textContent || '最新版に更新';
+
+  if (!navigator.onLine) {
+    if (status) status.textContent = `現在のバージョン：v${APP_VERSION}。オンライン時に更新してください。`;
+    showToast('オフラインではアプリを更新できません');
+    return;
+  }
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = '更新を確認中…';
+  }
+
+  try {
+    if (status) status.textContent = '記録データを保存しています…';
+    await flushSave();
+
+    if (!('serviceWorker' in navigator) || !location.protocol.startsWith('http')) {
+      throw new Error('この環境ではアプリ更新機能を利用できません。');
+    }
+
+    if (status) status.textContent = '最新版を取得しています…';
+    let registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) {
+      registration = await navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' });
+      await navigator.serviceWorker.ready;
+    }
+
+    // sw.js 自体も HTTP キャッシュを使わず更新確認する。
+    await registration.update();
+
+    // 更新前の Service Worker でも使えるメッセージ経由で、
+    // 記録データには触れずアプリ用 Cache Storage だけを安全に入れ替える。
+    const worker = navigator.serviceWorker.controller || registration.active || registration.waiting;
+    await requestFreshAppCache(worker);
+
+    if (status) status.textContent = '最新版を取得しました。画面を再読み込みします…';
+    showToast('アプリを最新版に更新しました');
+    window.setTimeout(() => location.reload(), 350);
+  } catch (err) {
+    console.error('App update failed', err);
+    if (status) status.textContent = `更新できませんでした：${err.message || err}`;
+    showToast('アプリを更新できませんでした');
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  }
+}
+
 async function requestPersistentStorage() {
   if (!navigator.storage?.persist) {
     showToast('このブラウザは永続ストレージ要求に対応していません');
@@ -973,6 +1046,7 @@ function bindStaticEvents() {
   $('#exportCsv').addEventListener('click', exportCsv);
   $('#importBackup').addEventListener('change', e => importBackupFile(e.target.files?.[0]));
   $('#requestPersistentStorage').addEventListener('click', requestPersistentStorage);
+  $('#updateApp').addEventListener('click', updateApp);
   $('#createSnapshot').addEventListener('click', async () => {
     try { await createSnapshotInternal('手動'); await flushSave(); await renderSettings(); showToast('復元ポイントを作成しました'); }
     catch { showToast('復元ポイントを作成できませんでした'); }
@@ -988,7 +1062,12 @@ function bindStaticEvents() {
 
 async function registerServiceWorker() {
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    try { await navigator.serviceWorker.register('./sw.js'); } catch (err) { console.warn('Service worker registration failed', err); }
+    try {
+      const registration = await navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' });
+      registration.update().catch(() => {});
+    } catch (err) {
+      console.warn('Service worker registration failed', err);
+    }
   }
 }
 

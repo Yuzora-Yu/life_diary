@@ -207,3 +207,7 @@ textarea:focus,input:focus,select:focus{border-color:#d0a32c;box-shadow:0 0 0 3p
   .week-goals-card{scroll-margin-top:68px}
 }
 @media print{.goal-edit-btn{display:none!important}}
+
+/* v1.2.2: safe in-app updater */
+#updateApp:disabled{cursor:progress;opacity:.68}
+#appUpdateStatus{min-height:1.6em}

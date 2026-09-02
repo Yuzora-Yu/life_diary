@@ -58,3 +58,16 @@ python3 -m http.server 8000
 - 更新時は IndexedDB / localStorage の記録データを残したまま、アプリ用 Cache Storage だけを最新版へ入れ替えます。
 - 更新ファイルはすべて取得成功してからキャッシュを置き換えるため、通信失敗時は既存のオフラインキャッシュを保持します。
 - Service Worker 自体の更新確認では HTTP キャッシュを使わないようにしました。
+
+## v1.2.3
+- 旧版利用者向けに `/life_diary/update.html` を追加。アプリ用キャッシュと Service Worker だけを整理し、記録データを残したまま最新版へ戻します。
+- Service Worker が新版へ切り替わった場合、記録を保存してから画面を自動再読み込みするようにしました。
+- `app.js` / `styles.css` に版番号付きURLを使い、更新直後に古いHTTPキャッシュを拾いにくくしました。
+
+## アプリ更新について
+
+通常起動時に Service Worker の更新を確認し、既存の Service Worker から新版へ切り替わった場合は、記録を保存してから自動で画面を再読み込みします。
+
+旧版のキャッシュが強く残って更新できない端末では、`/life_diary/update.html` を一度開いてください。このページはアプリ用 Cache Storage と Service Worker だけを整理して最新版を開き直します。IndexedDB / localStorage の記録データは削除しません。
+
+リリース時は `app.js` の `APP_VERSION` と `sw.js` の `CACHE_NAME` を更新してください。`index.html` と `sw.js` に付けている `app.js` / `styles.css` のバージョンクエリも同じ版へ合わせます。

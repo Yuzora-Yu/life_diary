@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.2.3';
 const SCHEMA_VERSION = 2;
 const DB_NAME = 'komorebi-record-db';
 const DB_VERSION = 1;
@@ -22,6 +22,7 @@ let savePromise = Promise.resolve();
 let toastTimer = null;
 let primaryStorageOkay = true;
 let shadowStorageOkay = true;
+let serviceWorkerReloading = false;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -960,10 +961,11 @@ async function updateApp() {
     }
 
     // sw.js 自体も HTTP キャッシュを使わず更新確認する。
+    // 新しい Service Worker が見つかれば controllerchange 側で保存後に自動再読み込みする。
     await registration.update();
 
-    // 更新前の Service Worker でも使えるメッセージ経由で、
-    // 記録データには触れずアプリ用 Cache Storage だけを安全に入れ替える。
+    // 現在の Service Worker が対応している場合は、アプリ用 Cache Storage も即時更新する。
+    // （この app.js が動いている時点では v5 以降なので REFRESH_APP_CACHE に対応済み。）
     const worker = navigator.serviceWorker.controller || registration.active || registration.waiting;
     await requestFreshAppCache(worker);
 
@@ -1061,13 +1063,30 @@ function bindStaticEvents() {
 }
 
 async function registerServiceWorker() {
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  if (!('serviceWorker' in navigator) || !location.protocol.startsWith('http')) return;
+
+  // 初回インストール時の controllerchange では不要な再読み込みをしない。
+  // すでに旧 Service Worker に制御されている画面だけ、新版への切り替わりを自動反映する。
+  const hadControllerAtStartup = !!navigator.serviceWorker.controller;
+
+  navigator.serviceWorker.addEventListener('controllerchange', async () => {
+    if (!hadControllerAtStartup || serviceWorkerReloading) return;
+    serviceWorkerReloading = true;
+
     try {
-      const registration = await navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' });
-      registration.update().catch(() => {});
+      if (state) await flushSave();
     } catch (err) {
-      console.warn('Service worker registration failed', err);
+      console.warn('Failed to flush state before Service Worker reload', err);
+    } finally {
+      location.reload();
     }
+  });
+
+  try {
+    const registration = await navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' });
+    await registration.update();
+  } catch (err) {
+    console.warn('Service worker registration failed', err);
   }
 }
 

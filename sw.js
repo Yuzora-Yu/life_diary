@@ -1,7 +1,7 @@
-const CACHE_NAME = 'komorebi-record-v5';
+const CACHE_NAME = 'komorebi-record-v6';
 const CACHE_PREFIX = 'komorebi-record-';
 const ASSETS = [
-  './', './index.html', './styles.css', './app.js', './manifest.json', './favicon.png',
+  './', './index.html', './styles.css?v=1.2.3', './app.js?v=1.2.3', './manifest.json', './favicon.png',
   './icons/Icon-192.png', './icons/Icon-512.png', './icons/Icon-maskable-192.png', './icons/Icon-maskable-512.png'
 ];
 

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f6f1e8">
+  <meta name="robots" content="noindex,nofollow">
+  <title>こもれび記録｜アプリ更新</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f6f1e8; color: #38352f; padding: 24px; }
+    main { width: min(100%, 520px); background: rgba(255,255,255,.82); border: 1px solid rgba(80,70,55,.14); border-radius: 22px; padding: 28px; box-shadow: 0 16px 40px rgba(70,60,45,.10); }
+    h1 { margin: 0 0 12px; font-size: 1.45rem; }
+    p { line-height: 1.75; }
+    .status { margin: 20px 0 0; padding: 14px 16px; border-radius: 14px; background: rgba(118,139,105,.10); font-weight: 650; }
+    .note { font-size: .9rem; opacity: .78; }
+    button, a.button { display: inline-block; margin-top: 14px; border: 0; border-radius: 999px; padding: 11px 18px; background: #66795d; color: white; font: inherit; font-weight: 700; text-decoration: none; cursor: pointer; }
+    button[hidden], a[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>アプリを最新版に更新します</h1>
+    <p>記録データは残したまま、古いアプリ用キャッシュと Service Worker だけを更新します。</p>
+    <div class="status" id="status" role="status" aria-live="polite">ネット接続を確認しています…</div>
+    <p class="note">IndexedDB と localStorage に保存されている日記・週目標・設定は削除しません。</p>
+    <button type="button" id="retry" hidden>もう一度試す</button>
+    <a class="button" id="back" href="./" hidden>通常画面に戻る</a>
+  </main>
+
+  <script>
+    (() => {
+      'use strict';
+
+      const CACHE_PREFIX = 'komorebi-record-';
+      const status = document.getElementById('status');
+      const retry = document.getElementById('retry');
+      const back = document.getElementById('back');
+
+      function setStatus(message) {
+        status.textContent = message;
+      }
+
+      async function verifyNetwork() {
+        // 旧 Service Worker がオフライン時に index.html を代返しても誤判定しないよう、
+        // sw.js の中身まで確認して「本当にネットから取得できた」ことを確かめる。
+        const checkUrl = new URL('./sw.js', location.href);
+        checkUrl.searchParams.set('_update_check', Date.now().toString());
+        const response = await fetch(checkUrl.href, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const text = await response.text();
+        if (!text.includes('self.addEventListener') || !text.includes('CACHE_NAME')) {
+          throw new Error('最新版ファイルをネットから確認できませんでした');
+        }
+      }
+
+      async function clearAppCaches() {
+        if (!('caches' in window)) return;
+        const keys = await caches.keys();
+        await Promise.all(
+          keys.filter(key => key.startsWith(CACHE_PREFIX)).map(key => caches.delete(key))
+        );
+      }
+
+      async function unregisterAppWorker() {
+        if (!('serviceWorker' in navigator)) return;
+        const registration = await navigator.serviceWorker.getRegistration('./');
+        if (registration) await registration.unregister();
+      }
+
+      async function runUpdate() {
+        retry.hidden = true;
+        back.hidden = true;
+
+        try {
+          setStatus('最新版に接続できるか確認しています…');
+          await verifyNetwork();
+
+          setStatus('古いアプリ用キャッシュを整理しています…');
+          await clearAppCaches();
+
+          setStatus('Service Worker を更新しています…');
+          await unregisterAppWorker();
+
+          setStatus('最新版を開きます…');
+          const target = new URL('./', location.href);
+          target.searchParams.set('updated', Date.now().toString());
+          location.replace(target.href);
+        } catch (err) {
+          console.error('Recovery update failed', err);
+          setStatus('更新できませんでした。通信を確認して、もう一度試してください。記録データは削除していません。');
+          retry.hidden = false;
+          back.hidden = false;
+        }
+      }
+
+      retry.addEventListener('click', runUpdate);
+      runUpdate();
+    })();
+  </script>
+</body>
+</html>

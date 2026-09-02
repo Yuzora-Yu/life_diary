@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 const SCHEMA_VERSION = 2;
 const DB_NAME = 'komorebi-record-db';
 const DB_VERSION = 1;
@@ -499,7 +499,9 @@ function renderWeek() {
   $('#weekLabel').textContent = `${displayDateShort(start)} 〜 ${displayDateShort(end)}`;
 
   const goals = getWeekGoals(toDateKey(start));
-  $('#weekGoalRange').textContent = `${weekRangeLabel(start)} の目標`;
+  const goalRange = $('#weekGoalRange');
+  const goalEnd = addDays(start, 6);
+  goalRange.innerHTML = `<span class="week-goal-range-start">${start.getFullYear()}年 ${start.getMonth()+1}/${start.getDate()}（${WEEKDAYS[start.getDay()]}）〜</span><span class="week-goal-range-end">${goalEnd.getMonth()+1}/${goalEnd.getDate()}（${WEEKDAYS[goalEnd.getDay()]}）の目標</span>`;
   $('#weekGoal1').textContent = goals.goal1 || '未設定';
   $('#weekGoal2').textContent = goals.goal2 || '未設定';
 
@@ -600,46 +602,48 @@ function changeSelectedCalendarDate(days) {
 }
 
 function bindCalendarDaySwipe(panel) {
+  // renderCalendarDayPanel() reuses the same panel element. Bind only once so a
+  // single swipe can never accumulate multiple date-change handlers.
+  if (panel.dataset.daySwipeBound === 'true') return;
+  panel.dataset.daySwipeBound = 'true';
+
   let startX = 0;
   let startY = 0;
+  let pointerId = null;
   let tracking = false;
-  let blockSwipe = false;
 
-  panel.addEventListener('touchstart', event => {
-    if (event.touches.length !== 1) return;
-    const target = event.target;
-    blockSwipe = !!target.closest('input, textarea, select, button');
-    if (blockSwipe) return;
-    startX = event.touches[0].clientX;
-    startY = event.touches[0].clientY;
+  const resetSwipe = () => {
+    startX = 0;
+    startY = 0;
+    pointerId = null;
+    tracking = false;
+  };
+
+  panel.addEventListener('pointerdown', event => {
+    if (!event.isPrimary || !['touch', 'pen'].includes(event.pointerType)) return;
+    if (event.target.closest('input, textarea, select, button, [contenteditable="true"]')) {
+      resetSwipe();
+      return;
+    }
+    startX = event.clientX;
+    startY = event.clientY;
+    pointerId = event.pointerId;
     tracking = true;
   }, { passive: true });
 
-  panel.addEventListener('touchmove', event => {
-    if (!tracking || blockSwipe || event.touches.length !== 1) return;
-    const dx = event.touches[0].clientX - startX;
-    const dy = event.touches[0].clientY - startY;
-    if (Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy) * 1.2) event.preventDefault();
-  }, { passive: false });
+  panel.addEventListener('pointerup', event => {
+    if (!tracking || event.pointerId !== pointerId) return;
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    const isHorizontalSwipe = Math.abs(dx) >= 48 && Math.abs(dx) >= Math.abs(dy) * 1.25;
+    resetSwipe();
+    if (!isHorizontalSwipe) return;
 
-  panel.addEventListener('touchend', event => {
-    if (!tracking || blockSwipe || !event.changedTouches.length) {
-      tracking = false;
-      blockSwipe = false;
-      return;
-    }
-    const dx = event.changedTouches[0].clientX - startX;
-    const dy = event.changedTouches[0].clientY - startY;
-    tracking = false;
-    blockSwipe = false;
-    if (Math.abs(dx) < 55 || Math.abs(dx) < Math.abs(dy) * 1.25) return;
+    // Distance / flick speed never changes the amount: exactly one day per gesture.
     changeSelectedCalendarDate(dx < 0 ? 1 : -1);
   }, { passive: true });
 
-  panel.addEventListener('touchcancel', () => {
-    tracking = false;
-    blockSwipe = false;
-  }, { passive: true });
+  panel.addEventListener('pointercancel', resetSwipe, { passive: true });
 }
 
 function renderCalendarDayPanel() {
@@ -940,7 +944,19 @@ function bindStaticEvents() {
   $('#weekLabel').addEventListener('click', () => { currentWeekDate = startOfWeek(new Date()); renderWeek(); });
   $('#editGoalsFromWeek').addEventListener('click', () => {
     const start = startOfWeek(currentWeekDate);
-    currentCalendarMonth = startOfMonth(start); selectedCalendarDate = toDateKey(start); navigate('calendar');
+    currentCalendarMonth = startOfMonth(start);
+    selectedCalendarDate = toDateKey(start);
+    navigate('calendar');
+
+    // The weekly-goal editor lives below the calendar/day editor on phones.
+    // Scroll to the actual text boxes after the calendar view has rendered.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const goalEditor = $('.week-goals-card');
+      if (!goalEditor) return;
+      goalEditor.classList.add('is-edit-target');
+      goalEditor.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      window.setTimeout(() => goalEditor.classList.remove('is-edit-target'), 1400);
+    }));
   });
 
   $('#prevMonth').addEventListener('click', () => { currentCalendarMonth = addMonths(currentCalendarMonth,-1); selectedCalendarDate = toDateKey(currentCalendarMonth); renderCalendar(); });

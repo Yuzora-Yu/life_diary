@@ -184,3 +184,26 @@ textarea:focus,input:focus,select:focus{border-color:#d0a32c;box-shadow:0 0 0 3p
   .swipe-hint{font-size:9px!important}
   .week-start-label select{max-width:none}
 }
+/* v1.2.1: stable one-day swipe + weekly-goal header polish */
+.goal-strip-head{align-items:flex-start}
+.goal-strip-head>div{min-width:0;flex:1}
+#weekGoalRange{display:grid;gap:1px;line-height:1.45}
+.week-goal-range-start,.week-goal-range-end{display:block}
+.goal-edit-btn{
+  flex:0 0 auto;min-height:38px;padding:7px 12px;border:1px solid #d4ac37;border-radius:10px;
+  background:#fff4bd;color:var(--green-dark);font-weight:800;font-size:12px;line-height:1.2;
+  white-space:nowrap;box-shadow:0 2px 0 rgba(106,74,32,.08)
+}
+.goal-edit-btn:hover{background:#ffe99a;border-color:#c99a20}
+.goal-edit-btn:focus-visible{outline:3px solid rgba(232,189,63,.28);outline-offset:2px}
+#calendarDayPanel{touch-action:pan-y}
+.week-goals-card{scroll-margin-top:84px;transition:box-shadow .25s ease,border-color .25s ease}
+.week-goals-card.is-edit-target{border-color:#d0a32c;box-shadow:0 0 0 4px rgba(232,189,63,.20),var(--shadow)}
+@media (max-width:720px){
+  .goal-strip{padding:14px 13px}
+  .goal-strip-head{gap:10px}
+  #weekGoalRange{font-size:15px;line-height:1.5}
+  .goal-edit-btn{min-height:36px;padding:7px 10px;font-size:11px}
+  .week-goals-card{scroll-margin-top:68px}
+}
+@media print{.goal-edit-btn{display:none!important}}

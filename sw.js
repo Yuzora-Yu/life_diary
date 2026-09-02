@@ -1,4 +1,4 @@
-const CACHE_NAME = 'komorebi-record-v3';
+const CACHE_NAME = 'komorebi-record-v4';
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './manifest.json', './favicon.png',
   './icons/Icon-192.png', './icons/Icon-512.png', './icons/Icon-maskable-192.png', './icons/Icon-maskable-512.png'

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#e8bd3f">
-  <meta name="description" content="1週間の活動・気分・ふりかえりと、月ごとの2つの目標を記録するブラウザアプリ">
+  <meta name="description" content="1週間の活動・気分・ふりかえりと、週ごとの2つの目標を記録するブラウザアプリ">
   <title>こもれび記録</title>
   <link rel="icon" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
@@ -46,11 +46,11 @@
           </div>
         </div>
 
-        <section class="goal-strip" aria-label="この週の月間目標">
+        <section class="goal-strip" aria-label="この週の目標">
           <div class="goal-strip-head">
             <div>
-              <span class="section-kicker">MONTHLY GOALS</span>
-              <strong id="weekGoalMonth">今月の目標</strong>
+              <span class="section-kicker">WEEKLY GOALS</span>
+              <strong id="weekGoalRange">この週の目標</strong>
             </div>
             <button type="button" class="text-btn" id="editGoalsFromWeek">目標を編集</button>
           </div>
@@ -58,7 +58,6 @@
             <div class="goal-inline"><span>①</span><p id="weekGoal1">未設定</p></div>
             <div class="goal-inline"><span>②</span><p id="weekGoal2">未設定</p></div>
           </div>
-          <p class="goal-note" id="crossMonthNote" hidden>この週は月をまたいでいます。各日の「目標結果」は、その日が属する月の目標に紐づきます。</p>
         </section>
 
         <div class="week-grid-wrap">
@@ -83,23 +82,24 @@
 
         <div class="calendar-layout">
           <section class="calendar-card" aria-label="月間カレンダー">
-            <div class="weekday-row" aria-hidden="true"><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span class="sat">土</span><span class="sun">日</span></div>
+            <div class="weekday-row" id="calendarWeekdays" aria-hidden="true"></div>
             <div class="calendar-grid" id="calendarGrid"></div>
           </section>
 
           <aside class="day-editor-panel" id="calendarDayPanel" aria-label="選択日の記録"></aside>
 
-          <section class="month-goals-card">
+          <section class="week-goals-card">
             <div class="section-title-row">
               <div>
-                <span class="section-kicker">MONTHLY GOALS</span>
-                <h2>この月の目標</h2>
+                <span class="section-kicker">WEEKLY GOALS</span>
+                <h2>選択日の週の目標</h2>
+                <p class="goal-period" id="calendarGoalWeekLabel"></p>
               </div>
               <span class="autosave-caption">自動保存</span>
             </div>
-            <div class="month-goal-inputs">
-              <label><span>目標 ①</span><input id="monthGoal1" type="text" maxlength="120" placeholder="例：1日1回、食器を2つ洗う"></label>
-              <label><span>目標 ②</span><input id="monthGoal2" type="text" maxlength="120" placeholder="例：1日1,000歩あるく"></label>
+            <div class="week-goal-inputs">
+              <label><span>目標 ①</span><input id="weekGoalInput1" type="text" maxlength="120" placeholder="例：今週は3回、散歩する"></label>
+              <label><span>目標 ②</span><input id="weekGoalInput2" type="text" maxlength="120" placeholder="例：23時までに寝る日を4日つくる"></label>
             </div>
           </section>
         </div>
@@ -131,6 +131,26 @@
 
         <div class="settings-grid">
           <section class="settings-card">
+            <div class="settings-icon">週</div>
+            <div>
+              <h2>週の開始曜日</h2>
+              <p>週記録と週目標の区切りに使う曜日を、月〜日の中から選べます。</p>
+              <label class="week-start-label">起点となる曜日
+                <select id="weekStartSelect">
+                  <option value="1">月曜日</option>
+                  <option value="2">火曜日</option>
+                  <option value="3">水曜日</option>
+                  <option value="4">木曜日</option>
+                  <option value="5">金曜日</option>
+                  <option value="6">土曜日</option>
+                  <option value="0">日曜日</option>
+                </select>
+              </label>
+              <p class="fineprint">変更すると、既存の週目標は各週の中央日を基準に新しい区切りへ引き継ぎます。</p>
+            </div>
+          </section>
+
+          <section class="settings-card">
             <div class="settings-icon">保</div>
             <div>
               <h2>保存状態</h2>
@@ -149,7 +169,7 @@
             <div class="settings-icon">出</div>
             <div>
               <h2>バックアップを書き出す</h2>
-              <p>すべての記録・月間目標・設定を1つのJSONファイルに保存します。機種変更やブラウザの初期化前にもおすすめです。</p>
+              <p>すべての記録・週目標・設定を1つのJSONファイルに保存します。機種変更やブラウザの初期化前にもおすすめです。</p>
               <div class="button-row">
                 <button type="button" class="primary-btn" id="exportBackup">バックアップ出力</button>
                 <button type="button" class="secondary-btn" id="exportCsv">記録一覧をCSV出力</button>
@@ -186,7 +206,7 @@
         </div>
 
         <section class="danger-zone">
-          <div><h2>データを初期化</h2><p>端末内の記録と目標をすべて削除します。先にバックアップ出力することをおすすめします。</p></div>
+          <div><h2>データを初期化</h2><p>端末内の記録と週目標をすべて削除します。先にバックアップ出力することをおすすめします。</p></div>
           <button type="button" class="danger-btn" id="resetData">すべての記録を削除</button>
         </section>
       </section>

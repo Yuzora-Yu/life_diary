@@ -1,7 +1,7 @@
 'use strict';
 
-const APP_VERSION = '1.1.0';
-const SCHEMA_VERSION = 1;
+const APP_VERSION = '1.2.0';
+const SCHEMA_VERSION = 2;
 const DB_NAME = 'komorebi-record-db';
 const DB_VERSION = 1;
 const STORE_NAME = 'kv';
@@ -32,7 +32,7 @@ function defaultState() {
     schemaVersion: SCHEMA_VERSION,
     appVersion: APP_VERSION,
     records: {},
-    monthGoals: {},
+    weekGoals: {},
     settings: { weekStartsOn: 1 },
     meta: {
       createdAt: now,
@@ -56,19 +56,71 @@ function deepClone(value) {
 }
 
 function isValidState(value) {
-  return !!value && typeof value === 'object' && Number(value.schemaVersion) === SCHEMA_VERSION &&
-    value.records && typeof value.records === 'object' && value.monthGoals && typeof value.monthGoals === 'object';
+  if (!value || typeof value !== 'object' || !value.records || typeof value.records !== 'object') return false;
+  const version = Number(value.schemaVersion);
+  if (version === 1) return !!value.monthGoals && typeof value.monthGoals === 'object';
+  if (version === 2) return !!value.weekGoals && typeof value.weekGoals === 'object';
+  return false;
+}
+
+function migrateLegacyMonthGoals(monthGoals, weekStartsOn) {
+  const legacy = monthGoals && typeof monthGoals === 'object' ? monthGoals : {};
+  const candidates = new Set();
+  for (const monthKey of Object.keys(legacy)) {
+    const match = /^(\d{4})-(\d{2})$/.exec(monthKey);
+    if (!match) continue;
+    const year = Number(match[1]);
+    const monthIndex = Number(match[2]) - 1;
+    const daysInMonth = new Date(year, monthIndex + 1, 0, 12).getDate();
+    for (let day = 1; day <= daysInMonth; day++) {
+      candidates.add(toDateKey(startOfWeek(new Date(year, monthIndex, day, 12), weekStartsOn)));
+    }
+  }
+
+  const migrated = {};
+  for (const weekKey of candidates) {
+    const weekStart = parseDateKey(weekKey);
+    const midpointMonthKey = toMonthKey(addDays(weekStart, 3));
+    let source = legacy[midpointMonthKey];
+
+    // If the midpoint month had no goal, use the goal-bearing month with the most days in this week.
+    // This keeps edge-of-month goals from disappearing when only one adjacent month had goals.
+    if (!source || (!source.goal1 && !source.goal2)) {
+      const overlapCounts = {};
+      for (let i = 0; i < 7; i++) {
+        const key = toMonthKey(addDays(weekStart, i));
+        const candidate = legacy[key];
+        if (!candidate || (!candidate.goal1 && !candidate.goal2)) continue;
+        overlapCounts[key] = (overlapCounts[key] || 0) + 1;
+      }
+      const fallbackKey = Object.entries(overlapCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+      source = fallbackKey ? legacy[fallbackKey] : null;
+    }
+
+    if (!source) continue;
+    migrated[weekKey] = {
+      goal1: source.goal1 || '',
+      goal2: source.goal2 || '',
+      updatedAt: source.updatedAt || null
+    };
+  }
+  return migrated;
 }
 
 function normalizeState(input) {
   const base = defaultState();
   if (!isValidState(input)) return base;
+  const settings = { ...base.settings, ...(input.settings || {}) };
+  settings.weekStartsOn = normalizeWeekStartsOn(settings.weekStartsOn);
+  const weekGoals = Number(input.schemaVersion) === 1
+    ? migrateLegacyMonthGoals(input.monthGoals, settings.weekStartsOn)
+    : deepClone(input.weekGoals || {});
   return {
     schemaVersion: SCHEMA_VERSION,
     appVersion: APP_VERSION,
-    records: input.records || {},
-    monthGoals: input.monthGoals || {},
-    settings: { ...base.settings, ...(input.settings || {}) },
+    records: deepClone(input.records || {}),
+    weekGoals,
+    settings,
     meta: { ...base.meta, ...(input.meta || {}) }
   };
 }
@@ -177,10 +229,14 @@ async function loadState() {
   db = await openDatabase();
   primaryStorageOkay = !!db;
   let primary = null;
+  let primarySchemaVersion = null;
   if (db) {
     try {
       const candidate = await dbGet(STATE_KEY);
-      if (isValidState(candidate)) primary = normalizeState(candidate);
+      if (isValidState(candidate)) {
+        primarySchemaVersion = Number(candidate.schemaVersion);
+        primary = normalizeState(candidate);
+      }
     } catch {
       primaryStorageOkay = false;
     }
@@ -189,8 +245,8 @@ async function loadState() {
   const chosen = primary && shadow ? (updatedMs(shadow) > updatedMs(primary) ? shadow : primary) : (primary || shadow || defaultState());
   state = normalizeState(chosen);
 
-  // Repair whichever local copy is missing/stale.
-  if (db && (!primary || updatedMs(state) > updatedMs(primary))) {
+  // Repair whichever local copy is missing/stale, and persist schema migrations.
+  if (db && (!primary || primarySchemaVersion !== SCHEMA_VERSION || updatedMs(state) > updatedMs(primary))) {
     try { await dbPut(STATE_KEY, deepClone(state)); primaryStorageOkay = true; } catch { primaryStorageOkay = false; }
   }
   writeShadow(state);
@@ -289,10 +345,15 @@ function parseDateKey(key) {
   return new Date(y, m-1, d, 12, 0, 0, 0);
 }
 function addDays(date, days) { const d = new Date(date); d.setDate(d.getDate()+days); return d; }
-function startOfWeek(date) {
+function normalizeWeekStartsOn(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 0 && n <= 6 ? n : 1;
+}
+function getWeekStartsOn() { return normalizeWeekStartsOn(state?.settings?.weekStartsOn ?? 1); }
+function startOfWeek(date, weekStartsOn = getWeekStartsOn()) {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
-  const mondayOffset = (d.getDay()+6)%7;
-  d.setDate(d.getDate()-mondayOffset);
+  const offset = (d.getDay() - normalizeWeekStartsOn(weekStartsOn) + 7) % 7;
+  d.setDate(d.getDate() - offset);
   return d;
 }
 function startOfMonth(date) { return new Date(date.getFullYear(), date.getMonth(), 1, 12); }
@@ -302,6 +363,18 @@ function sameMonth(a, b) { return a.getFullYear() === b.getFullYear() && a.getMo
 function monthLabel(date) { return `${date.getFullYear()}年${date.getMonth()+1}月`; }
 function dateFullLabel(date) { return `${date.getFullYear()}年${date.getMonth()+1}月${date.getDate()}日（${WEEKDAYS[date.getDay()]}）`; }
 function displayDateShort(date) { return `${date.getMonth()+1}/${date.getDate()}`; }
+function weekKeyForDate(dateOrKey, weekStartsOn = getWeekStartsOn()) {
+  const date = typeof dateOrKey === 'string' ? parseDateKey(dateOrKey) : dateOrKey;
+  return toDateKey(startOfWeek(date, weekStartsOn));
+}
+function weekRangeLabel(start) {
+  const end = addDays(start, 6);
+  const startText = `${start.getMonth()+1}/${start.getDate()}（${WEEKDAYS[start.getDay()]}）`;
+  const endText = `${end.getMonth()+1}/${end.getDate()}（${WEEKDAYS[end.getDay()]}）`;
+  return start.getFullYear() === end.getFullYear()
+    ? `${start.getFullYear()}年 ${startText} 〜 ${endText}`
+    : `${start.getFullYear()}年 ${startText} 〜 ${end.getFullYear()}年 ${endText}`;
+}
 function htmlEscape(value) {
   return String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 }
@@ -313,12 +386,13 @@ function getOrCreateRecord(dateKey) {
   if (!state.records[dateKey]) state.records[dateKey] = defaultRecord();
   return state.records[dateKey];
 }
-function getGoals(monthKey) {
-  return { goal1: '', goal2: '', updatedAt: null, ...(state.monthGoals[monthKey] || {}) };
+function getWeekGoals(weekKey) {
+  return { goal1: '', goal2: '', updatedAt: null, ...(state.weekGoals[weekKey] || {}) };
 }
-function ensureGoals(monthKey) {
-  if (!state.monthGoals[monthKey]) state.monthGoals[monthKey] = { goal1:'', goal2:'', updatedAt:null };
-  return state.monthGoals[monthKey];
+function getWeekGoalsForDate(dateOrKey) { return getWeekGoals(weekKeyForDate(dateOrKey)); }
+function ensureWeekGoals(weekKey) {
+  if (!state.weekGoals[weekKey]) state.weekGoals[weekKey] = { goal1:'', goal2:'', updatedAt:null };
+  return state.weekGoals[weekKey];
 }
 function hasRecordContent(record) {
   if (!record) return false;
@@ -372,7 +446,7 @@ function hydrateDailyFields(root, dateKey) {
     else if (field === 'amMood' || field === 'pmMood') el.value = record[field] === '' ? 50 : record[field];
     else el.value = record[field] ?? '';
   }
-  const goals = getGoals(dateKey.slice(0,7));
+  const goals = getWeekGoalsForDate(dateKey);
   const g1 = $('[data-goal-label="1"]', root);
   const g2 = $('[data-goal-label="2"]', root);
   if (g1) g1.textContent = `① ${goals.goal1 ? goals.goal1 : '目標1の結果'}`;
@@ -424,13 +498,10 @@ function renderWeek() {
   const end = addDays(start, 6);
   $('#weekLabel').textContent = `${displayDateShort(start)} 〜 ${displayDateShort(end)}`;
 
-  const mid = addDays(start, 3);
-  const monthKey = toMonthKey(mid);
-  const goals = getGoals(monthKey);
-  $('#weekGoalMonth').textContent = `${monthLabel(mid)}の目標`;
+  const goals = getWeekGoals(toDateKey(start));
+  $('#weekGoalRange').textContent = `${weekRangeLabel(start)} の目標`;
   $('#weekGoal1').textContent = goals.goal1 || '未設定';
   $('#weekGoal2').textContent = goals.goal2 || '未設定';
-  $('#crossMonthNote').hidden = toMonthKey(start) === toMonthKey(end);
 
   const grid = $('#weekGrid');
   grid.innerHTML = '';
@@ -449,17 +520,20 @@ function renderWeek() {
 
 function renderCalendar() {
   $('#monthLabel').textContent = monthLabel(currentCalendarMonth);
-  const monthKey = toMonthKey(currentCalendarMonth);
-  const goals = getGoals(monthKey);
-  $('#monthGoal1').value = goals.goal1;
-  $('#monthGoal2').value = goals.goal2;
 
   const selectedDate = parseDateKey(selectedCalendarDate);
   if (!sameMonth(selectedDate, currentCalendarMonth)) selectedCalendarDate = toDateKey(currentCalendarMonth);
 
+  const selectedWeekStart = startOfWeek(parseDateKey(selectedCalendarDate));
+  const goals = getWeekGoals(toDateKey(selectedWeekStart));
+  $('#weekGoalInput1').value = goals.goal1;
+  $('#weekGoalInput2').value = goals.goal2;
+  $('#calendarGoalWeekLabel').textContent = weekRangeLabel(selectedWeekStart);
+  renderCalendarWeekdayHeader();
+
   const first = startOfMonth(currentCalendarMonth);
-  const firstMondayOffset = (first.getDay()+6)%7;
-  const gridStart = addDays(first, -firstMondayOffset);
+  const firstDayOffset = (first.getDay() - getWeekStartsOn() + 7) % 7;
+  const gridStart = addDays(first, -firstDayOffset);
   const grid = $('#calendarGrid');
   grid.innerHTML = '';
   for (let i=0; i<42; i++) {
@@ -467,6 +541,21 @@ function renderCalendar() {
     grid.appendChild(buildCalendarCell(date));
   }
   renderCalendarDayPanel();
+}
+
+function renderCalendarWeekdayHeader() {
+  const row = $('#calendarWeekdays');
+  if (!row) return;
+  const start = getWeekStartsOn();
+  row.innerHTML = '';
+  for (let i = 0; i < 7; i++) {
+    const day = (start + i) % 7;
+    const span = document.createElement('span');
+    span.textContent = WEEKDAYS[day];
+    if (day === 6) span.classList.add('sat');
+    if (day === 0) span.classList.add('sun');
+    row.appendChild(span);
+  }
 }
 
 function buildCalendarCell(date) {
@@ -503,37 +592,89 @@ function refreshCalendarCell(dateKey) {
   old.replaceWith(next);
 }
 
+function changeSelectedCalendarDate(days) {
+  const nextDate = addDays(parseDateKey(selectedCalendarDate), days);
+  selectedCalendarDate = toDateKey(nextDate);
+  currentCalendarMonth = startOfMonth(nextDate);
+  renderCalendar();
+}
+
+function bindCalendarDaySwipe(panel) {
+  let startX = 0;
+  let startY = 0;
+  let tracking = false;
+  let blockSwipe = false;
+
+  panel.addEventListener('touchstart', event => {
+    if (event.touches.length !== 1) return;
+    const target = event.target;
+    blockSwipe = !!target.closest('input, textarea, select, button');
+    if (blockSwipe) return;
+    startX = event.touches[0].clientX;
+    startY = event.touches[0].clientY;
+    tracking = true;
+  }, { passive: true });
+
+  panel.addEventListener('touchmove', event => {
+    if (!tracking || blockSwipe || event.touches.length !== 1) return;
+    const dx = event.touches[0].clientX - startX;
+    const dy = event.touches[0].clientY - startY;
+    if (Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy) * 1.2) event.preventDefault();
+  }, { passive: false });
+
+  panel.addEventListener('touchend', event => {
+    if (!tracking || blockSwipe || !event.changedTouches.length) {
+      tracking = false;
+      blockSwipe = false;
+      return;
+    }
+    const dx = event.changedTouches[0].clientX - startX;
+    const dy = event.changedTouches[0].clientY - startY;
+    tracking = false;
+    blockSwipe = false;
+    if (Math.abs(dx) < 55 || Math.abs(dx) < Math.abs(dy) * 1.25) return;
+    changeSelectedCalendarDate(dx < 0 ? 1 : -1);
+  }, { passive: true });
+
+  panel.addEventListener('touchcancel', () => {
+    tracking = false;
+    blockSwipe = false;
+  }, { passive: true });
+}
+
 function renderCalendarDayPanel() {
   const panel = $('#calendarDayPanel');
   const date = parseDateKey(selectedCalendarDate);
-  panel.innerHTML = `<div class="editor-head"><p>SELECTED DAY</p><h2>${dateFullLabel(date)}</h2></div>`;
+  panel.innerHTML = `<div class="editor-head"><div class="editor-head-top"><p>SELECTED DAY</p><div class="editor-day-nav"><button type="button" data-day-shift="-1" aria-label="前日の記録">‹</button><button type="button" data-day-shift="1" aria-label="翌日の記録">›</button></div></div><h2>${dateFullLabel(date)}</h2><p class="swipe-hint">← 横フリックで前日・翌日 →</p></div>`;
   panel.appendChild(cloneDailyFields(selectedCalendarDate));
+  $$('[data-day-shift]', panel).forEach(btn => btn.addEventListener('click', () => changeSelectedCalendarDate(Number(btn.dataset.dayShift))));
+  bindCalendarDaySwipe(panel);
 }
 
 function updateSelectedPanelGoalLabels() {
   if (currentView !== 'calendar') return;
   const panel = $('#calendarDayPanel');
   if (!panel) return;
-  const goals = getGoals(selectedCalendarDate.slice(0,7));
+  const goals = getWeekGoalsForDate(selectedCalendarDate);
   const g1 = $('[data-goal-label="1"]', panel);
   const g2 = $('[data-goal-label="2"]', panel);
   if (g1) g1.textContent = `① ${goals.goal1 || '目標1の結果'}`;
   if (g2) g2.textContent = `② ${goals.goal2 || '目標2の結果'}`;
 }
 
-function updateMonthGoal(field, value) {
-  const monthKey = toMonthKey(currentCalendarMonth);
-  const goals = ensureGoals(monthKey);
+function updateWeekGoal(field, value) {
+  const weekKey = weekKeyForDate(selectedCalendarDate);
+  const goals = ensureWeekGoals(weekKey);
   goals[field] = value;
   goals.updatedAt = new Date().toISOString();
-  if (!goals.goal1 && !goals.goal2) delete state.monthGoals[monthKey];
+  if (!goals.goal1 && !goals.goal2) delete state.weekGoals[weekKey];
   scheduleSave();
   updateSelectedPanelGoalLabels();
 }
 
 function availableMonths() {
   const keys = new Set(Object.keys(state.records).map(k=>k.slice(0,7)));
-  Object.keys(state.monthGoals).forEach(k=>keys.add(k));
+  Object.keys(state.weekGoals).forEach(k=>keys.add(k.slice(0,7)));
   keys.add(toMonthKey(new Date()));
   return [...keys].sort().reverse();
 }
@@ -556,7 +697,7 @@ function renderRecordListItems() {
   entries.sort((a,b)=>b[0].localeCompare(a[0]));
   if (month !== 'all') entries = entries.filter(([key])=>key.startsWith(month));
   if (query) entries = entries.filter(([key,rec]) => {
-    const goals = getGoals(key.slice(0,7));
+    const goals = getWeekGoalsForDate(key);
     return [key,rec.amActivity,rec.pmActivity,rec.reflection,rec.goal1Result,rec.goal2Result,goals.goal1,goals.goal2].join(' ').toLowerCase().includes(query);
   });
 
@@ -567,7 +708,7 @@ function renderRecordListItems() {
   }
   list.innerHTML = entries.map(([key,rec]) => {
     const date = parseDateKey(key);
-    const goals = getGoals(key.slice(0,7));
+    const goals = getWeekGoalsForDate(key);
     const am = [rec.amActivity, rec.amMood !== '' ? `気分 ${rec.amMood}` : ''].filter(Boolean).join(' / ');
     const pm = [rec.pmActivity, rec.pmMood !== '' ? `気分 ${rec.pmMood}` : ''].filter(Boolean).join(' / ');
     const results = [goals.goal1 ? `① ${goals.goal1}\n→ ${rec.goal1Result || '—'}` : (rec.goal1Result ? `① ${rec.goal1Result}` : ''), goals.goal2 ? `② ${goals.goal2}\n→ ${rec.goal2Result || '—'}` : (rec.goal2Result ? `② ${rec.goal2Result}` : '')].filter(Boolean).join('\n');
@@ -618,6 +759,8 @@ async function updateStorageUi() {
 
 async function renderSettings() {
   await updateStorageUi();
+  const weekStartSelect = $('#weekStartSelect');
+  if (weekStartSelect) weekStartSelect.value = String(getWeekStartsOn());
   const list = $('#snapshotList');
   if (!db) {
     list.innerHTML = '<div class="empty-state">このブラウザでは端末内復元ポイントを利用できません。</div>';
@@ -661,7 +804,7 @@ function csvEscape(value) {
 function exportCsv() {
   const header = ['日付','曜日','AMの活動','AM気分','PMの活動','PM気分','1日のふりかえり','目標1','目標1の結果','目標2','目標2の結果'];
   const rows = Object.entries(state.records).filter(([,r])=>hasRecordContent(r)).sort((a,b)=>a[0].localeCompare(b[0])).map(([key,r]) => {
-    const d = parseDateKey(key); const g = getGoals(key.slice(0,7));
+    const d = parseDateKey(key); const g = getWeekGoalsForDate(key);
     return [key,WEEKDAYS[d.getDay()],r.amActivity,r.amMood,r.pmActivity,r.pmMood,r.reflection,g.goal1,r.goal1Result,g.goal2,r.goal2Result];
   });
   const csv = '\ufeff' + [header,...rows].map(row=>row.map(csvEscape).join(',')).join('\r\n');
@@ -675,12 +818,47 @@ function parseBackupObject(obj) {
   return normalizeState(candidate);
 }
 
+function remapWeekGoals(weekGoals, oldWeekStartsOn, newWeekStartsOn) {
+  const oldStart = normalizeWeekStartsOn(oldWeekStartsOn);
+  const newStart = normalizeWeekStartsOn(newWeekStartsOn);
+  if (oldStart === newStart) return deepClone(weekGoals || {});
+  const remapped = {};
+  for (const [weekKey, goals] of Object.entries(weekGoals || {})) {
+    const representativeDate = addDays(parseDateKey(weekKey), 3);
+    const nextKey = weekKeyForDate(representativeDate, newStart);
+    const existing = remapped[nextKey];
+    const goalUpdated = Date.parse(goals?.updatedAt || '') || 0;
+    const existingUpdated = Date.parse(existing?.updatedAt || '') || 0;
+    if (!existing || goalUpdated >= existingUpdated) {
+      remapped[nextKey] = { goal1: goals?.goal1 || '', goal2: goals?.goal2 || '', updatedAt: goals?.updatedAt || null };
+    }
+  }
+  return remapped;
+}
+
+function updateWeekStartsOn(value) {
+  const nextStart = normalizeWeekStartsOn(value);
+  const previousStart = getWeekStartsOn();
+  if (nextStart === previousStart) return;
+  state.weekGoals = remapWeekGoals(state.weekGoals, previousStart, nextStart);
+  state.settings.weekStartsOn = nextStart;
+  currentWeekDate = startOfWeek(currentWeekDate, nextStart);
+  scheduleSave();
+  showToast(`週の開始曜日を${WEEKDAYS[nextStart]}曜日に変更しました`);
+}
+
 function mergeStates(current, incoming) {
-  const merged = normalizeState(current);
-  merged.records = { ...merged.records, ...deepClone(incoming.records) };
-  merged.monthGoals = { ...merged.monthGoals, ...deepClone(incoming.monthGoals) };
-  merged.settings = { ...merged.settings, ...deepClone(incoming.settings || {}) };
-  merged.meta.createdAt = current.meta?.createdAt || incoming.meta?.createdAt || new Date().toISOString();
+  const currentState = normalizeState(current);
+  const incomingState = normalizeState(incoming);
+  const targetWeekStartsOn = normalizeWeekStartsOn(incomingState.settings?.weekStartsOn ?? currentState.settings.weekStartsOn);
+  const merged = normalizeState(currentState);
+  merged.records = { ...deepClone(currentState.records), ...deepClone(incomingState.records) };
+  merged.weekGoals = {
+    ...remapWeekGoals(currentState.weekGoals, currentState.settings.weekStartsOn, targetWeekStartsOn),
+    ...remapWeekGoals(incomingState.weekGoals, incomingState.settings.weekStartsOn, targetWeekStartsOn)
+  };
+  merged.settings = { ...currentState.settings, ...deepClone(incomingState.settings || {}), weekStartsOn: targetWeekStartsOn };
+  merged.meta.createdAt = currentState.meta?.createdAt || incomingState.meta?.createdAt || new Date().toISOString();
   merged.meta.updatedAt = new Date().toISOString();
   return merged;
 }
@@ -741,7 +919,7 @@ async function requestPersistentStorage() {
 }
 
 async function resetAllData() {
-  if (!confirm('すべての記録と月間目標を削除します。\nこの操作の直前に端末内復元ポイントを作成します。続けますか？')) return;
+  if (!confirm('すべての記録と週目標を削除します。\nこの操作の直前に端末内復元ポイントを作成します。続けますか？')) return;
   if (db) {
     try { await createSnapshotInternal('初期化前'); } catch {}
   }
@@ -761,16 +939,17 @@ function bindStaticEvents() {
   $('#thisWeek').addEventListener('click', () => { currentWeekDate = startOfWeek(new Date()); renderWeek(); });
   $('#weekLabel').addEventListener('click', () => { currentWeekDate = startOfWeek(new Date()); renderWeek(); });
   $('#editGoalsFromWeek').addEventListener('click', () => {
-    const mid = addDays(startOfWeek(currentWeekDate),3);
-    currentCalendarMonth = startOfMonth(mid); selectedCalendarDate = toDateKey(mid); navigate('calendar');
+    const start = startOfWeek(currentWeekDate);
+    currentCalendarMonth = startOfMonth(start); selectedCalendarDate = toDateKey(start); navigate('calendar');
   });
 
   $('#prevMonth').addEventListener('click', () => { currentCalendarMonth = addMonths(currentCalendarMonth,-1); selectedCalendarDate = toDateKey(currentCalendarMonth); renderCalendar(); });
   $('#nextMonth').addEventListener('click', () => { currentCalendarMonth = addMonths(currentCalendarMonth,1); selectedCalendarDate = toDateKey(currentCalendarMonth); renderCalendar(); });
   $('#thisMonth').addEventListener('click', () => { currentCalendarMonth = startOfMonth(new Date()); selectedCalendarDate = toDateKey(new Date()); renderCalendar(); });
   $('#monthLabel').addEventListener('click', () => { currentCalendarMonth = startOfMonth(new Date()); selectedCalendarDate = toDateKey(new Date()); renderCalendar(); });
-  $('#monthGoal1').addEventListener('input', e => updateMonthGoal('goal1', e.target.value));
-  $('#monthGoal2').addEventListener('input', e => updateMonthGoal('goal2', e.target.value));
+  $('#weekGoalInput1').addEventListener('input', e => updateWeekGoal('goal1', e.target.value));
+  $('#weekGoalInput2').addEventListener('input', e => updateWeekGoal('goal2', e.target.value));
+  $('#weekStartSelect').addEventListener('change', e => updateWeekStartsOn(e.target.value));
 
   $('#listMonthFilter').addEventListener('change', renderRecordListItems);
   $('#listSearch').addEventListener('input', renderRecordListItems);
@@ -799,6 +978,7 @@ async function registerServiceWorker() {
 
 async function init() {
   await loadState();
+  currentWeekDate = startOfWeek(new Date());
   bindStaticEvents();
   renderCalendar();
   updateStorageUi();

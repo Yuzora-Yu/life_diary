@@ -3,13 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#e8bd3f">
+  <meta name="google-drive-client-id" content="">
+  <meta name="theme-color" content="#ffff14">
   <meta name="description" content="1週間の活動・気分・ふりかえりと、週ごとの2つの目標を記録するブラウザアプリ">
   <title>こもれび記録</title>
   <link rel="icon" href="favicon.png">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="styles.css?v=1.2.3">
+  <link rel="stylesheet" href="styles.css?v=1.3.0">
 </head>
 <body>
   <div class="app-shell">
@@ -214,6 +215,32 @@
               <button type="button" class="secondary-btn" id="createSnapshot">今すぐ復元ポイントを作る</button>
             </div>
           </section>
+          <section class="settings-card cloud-backup-card" aria-labelledby="cloudBackupTitle">
+            <div class="settings-icon" aria-hidden="true">G</div>
+            <div>
+              <h2 id="cloudBackupTitle">Google Drive バックアップ</h2>
+              <p>Googleアカウントを選んで、すべての記録・週目標・設定を保存・読込できます。</p>
+              <div class="button-row">
+                <button type="button" class="primary-btn" id="saveGoogleBackup" disabled>Google Driveに保存</button>
+                <button type="button" class="secondary-btn" id="loadGoogleBackup" disabled>Google Driveから読込</button>
+              </div>
+              <label class="cloud-import-label">読込方法
+                <select id="cloudImportMode">
+                  <option value="merge">追加・更新（同じ日付はバックアップを優先）</option>
+                  <option value="replace">すべて置き換え</option>
+                </select>
+              </label>
+              <p class="fineprint cloud-status" id="cloudBackupStatus" role="status" aria-live="polite">Google Drive連携は未設定です。ファイルへのバックアップ出力・読込をご利用ください。</p>
+              <button type="button" class="secondary-btn" id="retryGoogleBackup" hidden>接続を再確認</button>
+              <p class="fineprint">保存先：マイドライブ / こもれび記録 Backups / komorebi-backup.json<br>保存するたびに同じファイルを更新します。読込前の記録は端末内の復元ポイントへ残します。</p>
+              <details class="cloud-privacy">
+                <summary>Google連携で扱うデータ</summary>
+                <p>記録・週目標・設定は、お使いのブラウザーとGoogle Driveの間で直接送受信します。Gmail、メールアドレス、プロフィールの取得権限は要求しません。認証情報は操作中だけ保持し、端末内の記録には保存しません。</p>
+                <p>バックアップはJSONファイルです。保存先の共有設定はご自身で管理できます。連携の解除は<a href="https://myaccount.google.com/connections" target="_blank" rel="noopener noreferrer">Googleアカウントの接続管理</a>から行えます。</p>
+              </details>
+            </div>
+          </section>
+
         </div>
 
         <section class="danger-zone">
@@ -246,6 +273,7 @@
     </div>
   </template>
 
-  <script src="app.js?v=1.2.3" defer></script>
+  <script src="google-drive.js?v=1.3.0" defer></script>
+  <script src="app.js?v=1.3.0" defer></script>
 </body>
 </html>

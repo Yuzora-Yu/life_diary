@@ -1,7 +1,7 @@
-const CACHE_NAME = 'komorebi-record-v6';
+const CACHE_NAME = 'komorebi-record-v7';
 const CACHE_PREFIX = 'komorebi-record-';
 const ASSETS = [
-  './', './index.html', './styles.css?v=1.2.3', './app.js?v=1.2.3', './manifest.json', './favicon.png',
+  './', './index.html', './styles.css?v=1.3.0', './app.js?v=1.3.0', './google-drive.js?v=1.3.0', './manifest.json', './favicon.png',
   './icons/Icon-192.png', './icons/Icon-512.png', './icons/Icon-maskable-192.png', './icons/Icon-maskable-512.png'
 ];
 
@@ -58,7 +58,7 @@ self.addEventListener('message', event => {
 });
 
 self.addEventListener('fetch', event => {
-  if (event.request.method !== 'GET') return;
+  if (event.request.method !== 'GET' || new URL(event.request.url).origin !== self.location.origin) return;
   event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request).then(response => {
     if (response && response.status === 200 && response.type === 'basic') {
       const copy = response.clone();

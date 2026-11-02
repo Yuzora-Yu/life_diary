@@ -1,12 +1,13 @@
 'use strict';
 
-const APP_VERSION = '1.2.3';
+const APP_VERSION = '1.3.0';
 const SCHEMA_VERSION = 2;
 const DB_NAME = 'komorebi-record-db';
 const DB_VERSION = 1;
 const STORE_NAME = 'kv';
 const STATE_KEY = 'state';
 const SHADOW_KEY = 'komorebi-record-shadow-v1';
+const RECOVERY_KEY = 'komorebi-record-before-import-v1';
 const MAX_SNAPSHOTS = 8;
 const AUTO_SNAPSHOT_INTERVAL = 6 * 60 * 60 * 1000;
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
@@ -23,6 +24,10 @@ let toastTimer = null;
 let primaryStorageOkay = true;
 let shadowStorageOkay = true;
 let serviceWorkerReloading = false;
+let cloudBackupBusy = false;
+let cloudBackupPreparing = false;
+let cloudBackupReady = false;
+let backupApplication = null;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -269,6 +274,7 @@ function scheduleSave() {
 }
 
 async function flushSave() {
+  if (backupApplication) return backupApplication;
   clearTimeout(saveTimer);
   saveTimer = null;
   savePromise = savePromise.then(persistState).catch(() => {});
@@ -277,7 +283,7 @@ async function flushSave() {
 
 async function persistState() {
   const now = new Date();
-  const nowIso = now.toISOString();
+  const nowIso = new Date(Math.max(now.getTime(), updatedMs(state) + 1)).toISOString();
   state.meta.updatedAt = nowIso;
   state.appVersion = APP_VERSION;
 
@@ -325,8 +331,10 @@ async function pruneSnapshots() {
 }
 
 async function getSnapshots() {
-  if (!db) return [];
-  const keys = (await dbKeys()).filter(k => String(k).startsWith('snapshot:')).sort().reverse();
+  let keys = [];
+  if (db) {
+    try { keys = (await dbKeys()).filter(k => String(k).startsWith('snapshot:')).sort().reverse(); } catch {}
+  }
   const values = [];
   for (const key of keys.slice(0, MAX_SNAPSHOTS)) {
     try {
@@ -334,7 +342,11 @@ async function getSnapshots() {
       if (item?.state) values.push({ key, ...item });
     } catch {}
   }
-  return values;
+  try {
+    const recovery = JSON.parse(localStorage.getItem(RECOVERY_KEY) || 'null');
+    if (recovery?.state && isValidState(recovery.state)) values.push({ key: RECOVERY_KEY, ...recovery });
+  } catch {}
+  return values.sort((a,b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, MAX_SNAPSHOTS);
 }
 
 function toDateKey(date) {
@@ -763,16 +775,13 @@ async function updateStorageUi() {
 }
 
 async function renderSettings() {
+  prepareCloudBackup();
   await updateStorageUi();
   const appUpdateStatus = $('#appUpdateStatus');
   if (appUpdateStatus) appUpdateStatus.textContent = `現在のバージョン：v${APP_VERSION}。記録データは更新時も保持されます。`;
   const weekStartSelect = $('#weekStartSelect');
   if (weekStartSelect) weekStartSelect.value = String(getWeekStartsOn());
   const list = $('#snapshotList');
-  if (!db) {
-    list.innerHTML = '<div class="empty-state">このブラウザでは端末内復元ポイントを利用できません。</div>';
-    return;
-  }
   let snapshots = [];
   try { snapshots = await getSnapshots(); } catch {}
   if (!snapshots.length) {
@@ -794,10 +803,7 @@ function downloadFile(filename, content, type) {
 async function exportBackup() {
   state.meta.lastBackupAt = new Date().toISOString();
   await flushSave();
-  const payload = {
-    format: 'komorebi-record-backup', schemaVersion: SCHEMA_VERSION, appVersion: APP_VERSION,
-    exportedAt: new Date().toISOString(), data: state
-  };
+  const payload = buildBackupPayload();
   const date = toDateKey(new Date()).replaceAll('-','');
   downloadFile(`komorebi-backup-${date}.json`, JSON.stringify(payload, null, 2), 'application/json;charset=utf-8');
   updateStorageUi();
@@ -822,7 +828,207 @@ function exportCsv() {
 function parseBackupObject(obj) {
   const candidate = obj?.format === 'komorebi-record-backup' ? obj.data : obj;
   if (!isValidState(candidate)) throw new Error('このアプリのバックアップ形式として認識できません。');
+  validateBackupStructure(candidate);
   return normalizeState(candidate);
+}
+
+function buildBackupPayload() {
+  return {
+    format: 'komorebi-record-backup', schemaVersion: SCHEMA_VERSION, appVersion: APP_VERSION,
+    exportedAt: new Date().toISOString(), data: deepClone(state)
+  };
+}
+
+function validateBackupStructure(candidate) {
+  const object = value => value && typeof value === 'object' && !Array.isArray(value);
+  const fail = () => { throw new Error('バックアップの記録データが壊れているか、対応していない形式です。'); };
+  const dateKey = key => /^\d{4}-\d{2}-\d{2}$/.test(key) && toDateKey(parseDateKey(key)) === key;
+  const textFields = ['amActivity','pmActivity','reflection','goal1Result','goal2Result'];
+  if (!object(candidate.records) || !object(candidate.settings || {}) || !object(candidate.meta || {})) fail();
+  for (const [date, record] of Object.entries(candidate.records)) {
+    if (!dateKey(date) || !object(record)) fail();
+    for (const field of textFields) if (record[field] != null && typeof record[field] !== 'string') fail();
+    for (const field of ['amMood','pmMood']) {
+      const value = record[field];
+      if (value != null && value !== '' && (typeof value !== 'number' && typeof value !== 'string'
+        || !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100)) fail();
+    }
+  }
+  const goals = Number(candidate.schemaVersion) === 1 ? candidate.monthGoals : candidate.weekGoals;
+  if (!object(goals)) fail();
+  for (const [key, goal] of Object.entries(goals)) {
+    if (Number(candidate.schemaVersion) === 1 ? !/^\d{4}-(0[1-9]|1[0-2])$/.test(key) : !dateKey(key)) fail();
+    if (!object(goal)) fail();
+    for (const field of ['goal1','goal2']) if (goal[field] != null && typeof goal[field] !== 'string') fail();
+  }
+}
+
+async function writeVerifiedBackupState(value) {
+  const expected = JSON.stringify(value);
+  let primary = false;
+  if (db) {
+    try { await dbPut(STATE_KEY, value); primary = JSON.stringify(await dbGet(STATE_KEY)) === expected; } catch {}
+  }
+  let shadow = false;
+  try { shadow = writeShadow(value) && localStorage.getItem(SHADOW_KEY) === expected; } catch {}
+  primaryStorageOkay = primary;
+  shadowStorageOkay = shadow;
+  return primary || shadow;
+}
+
+async function preserveImportRecovery(value) {
+  const createdAt = new Date().toISOString();
+  const snapshot = { createdAt, reason: '読込前', state: deepClone(value) };
+  if (db) {
+    const key = `snapshot:${createdAt}`;
+    try {
+      await dbPut(key, snapshot);
+      if (JSON.stringify(await dbGet(key)) === JSON.stringify(snapshot)) return;
+    } catch {}
+  }
+  try {
+    const text = JSON.stringify(snapshot);
+    localStorage.setItem(RECOVERY_KEY, text);
+    if (localStorage.getItem(RECOVERY_KEY) === text) return;
+  } catch {}
+  throw new Error('読込前の復元ポイントを保存できないため、読み込みを中止しました。');
+}
+
+function applyBackupData(incoming, mode) {
+  if (backupApplication) return Promise.reject(new Error('バックアップの読み込み中です。'));
+  backupApplication = applyBackupDataInternal(incoming, mode);
+  return backupApplication.finally(() => { backupApplication = null; });
+}
+
+async function applyBackupDataInternal(incoming, mode) {
+  const main = $('#appMain');
+  const nav = $('.main-nav');
+  main.inert = true;
+  nav.inert = true;
+  let previous;
+  try {
+    await flushSave();
+    previous = deepClone(state);
+    const next = mode === 'replace' ? deepClone(incoming) : mergeStates(previous, incoming);
+    // A successful fallback copy must be newer than a stale primary copy, even within one millisecond.
+    next.meta.updatedAt = new Date(Math.max(Date.now(), updatedMs(previous) + 1)).toISOString();
+    await preserveImportRecovery(previous);
+    if (!await writeVerifiedBackupState(next)) {
+      const restored = await writeVerifiedBackupState(previous);
+      throw new Error(restored
+        ? '読み込んだデータを保存できなかったため、読込前の状態に戻しました。'
+        : '読み込んだデータを保存できませんでした。読込前の復元ポイントは保管しています。');
+    }
+    state = next;
+    currentWeekDate = startOfWeek(currentWeekDate);
+    setSaveIndicator('saved', primaryStorageOkay && shadowStorageOkay ? '保存済み（2重保存）' : '保存済み（予備経路）');
+    if (db) { try { await pruneSnapshots(); } catch {} }
+    renderView(currentView);
+  } finally {
+    main.inert = false;
+    nav.inert = false;
+  }
+}
+
+function cloudBackupStatus(message, kind = '') {
+  const status = $('#cloudBackupStatus');
+  status.textContent = message;
+  status.dataset.kind = kind;
+}
+
+function updateCloudBackupButtons() {
+  for (const id of ['saveGoogleBackup', 'loadGoogleBackup']) {
+    $(`#${id}`).disabled = cloudBackupBusy || !cloudBackupReady;
+  }
+  $('#cloudImportMode').disabled = cloudBackupBusy;
+  $('#retryGoogleBackup').disabled = cloudBackupBusy || cloudBackupPreparing;
+  $('.cloud-backup-card').setAttribute('aria-busy', String(cloudBackupBusy || cloudBackupPreparing));
+}
+
+async function prepareCloudBackup() {
+  if (cloudBackupBusy || cloudBackupPreparing || cloudBackupReady) return;
+  const drive = window.KomorebiDrive;
+  const retry = $('#retryGoogleBackup');
+  retry.hidden = true;
+  if (!drive?.isConfigured()) {
+    cloudBackupStatus('Google Drive連携は未設定です。ファイルへのバックアップ出力・読込をご利用ください。');
+    updateCloudBackupButtons();
+    return;
+  }
+  const local = ['localhost','127.0.0.1','[::1]'].includes(location.hostname);
+  if (!(location.protocol === 'https:' || location.protocol === 'http:' && local)) {
+    cloudBackupStatus('Google Drive連携はHTTPSまたは開発用localhostでご利用ください。', 'error');
+    return;
+  }
+  cloudBackupPreparing = true;
+  updateCloudBackupButtons();
+  cloudBackupStatus('Google Driveへの接続を確認しています…');
+  try {
+    if (!navigator.onLine) throw new Error('offline');
+    await drive.prepare();
+    cloudBackupReady = true;
+    cloudBackupStatus('保存・読込時にGoogleアカウントを選択します。自動では送信しません。');
+  } catch {
+    cloudBackupStatus('Google Driveへ接続できませんでした。通信を確認して、接続を再確認してください。', 'error');
+    retry.hidden = false;
+  } finally {
+    cloudBackupPreparing = false;
+    updateCloudBackupButtons();
+  }
+}
+
+async function runCloudBackup(action) {
+  if (cloudBackupBusy || !cloudBackupReady) return;
+  const drive = window.KomorebiDrive;
+  const mode = $('#cloudImportMode').value;
+  cloudBackupBusy = true;
+  updateCloudBackupButtons();
+  cloudBackupStatus('Googleアカウントを選択してください…');
+  try {
+    // Keep this call in the original click turn so browsers allow the OAuth popup.
+    await drive.authorize();
+    if (action === 'save') {
+      if (!confirm('選択したGoogleアカウントへ、現在のすべての記録・週目標・設定を保存します。\n保存済みのバックアップがある場合は更新します。続けますか？')) {
+        cloudBackupStatus('保存をキャンセルしました。');
+        return;
+      }
+      cloudBackupStatus('Google Driveに保存しています…');
+      await flushSave();
+      const payload = buildBackupPayload();
+      parseBackupObject(payload);
+      await drive.uploadBackup(JSON.stringify(payload, null, 2));
+      state.meta.lastBackupAt = new Date().toISOString();
+      await flushSave();
+      cloudBackupStatus(`Google Driveに保存しました（${formatDateTime(new Date().toISOString())}）。`);
+      showToast('Google Driveにバックアップを保存しました');
+    } else {
+      cloudBackupStatus('Google Driveのバックアップを確認しています…');
+      const downloaded = await drive.downloadBackup();
+      const incoming = parseBackupObject(JSON.parse(downloaded.text));
+      const count = Object.values(incoming.records).filter(hasRecordContent).length;
+      const operation = mode === 'replace'
+        ? '現在の記録・週目標・設定をすべて置き換えます。'
+        : '記録と週目標を追加・更新し、設定を読み込みます。同じ日付の内容はバックアップを優先します。';
+      if (!confirm(`Google Driveのバックアップ（記録 ${count}日分）を読み込みます。\n${operation}\n読込前の状態は端末内の復元ポイントへ残します。続けますか？`)) {
+        cloudBackupStatus('読み込みをキャンセルしました。');
+        return;
+      }
+      cloudBackupStatus('バックアップを端末に保存しています…');
+      await applyBackupData(incoming, mode);
+      cloudBackupStatus(mode === 'replace' ? 'Google Driveのバックアップで置き換えました。' : 'Google Driveのバックアップを追加・更新しました。');
+      showToast('Google Driveからバックアップを読み込みました');
+    }
+  } catch (error) {
+    // Do not log Google responses, access tokens, or diary data.
+    const message = error?.driveSafe ? error.message : 'バックアップ処理を完了できませんでした。接続・ファイルの内容・端末の空き容量をご確認ください。';
+    cloudBackupStatus(message, 'error');
+  } finally {
+    drive.clearSession();
+    cloudBackupBusy = false;
+    cloudBackupReady = drive.isReady();
+    $('#retryGoogleBackup').hidden = cloudBackupReady;
+    updateCloudBackupButtons();
+  }
 }
 
 function remapWeekGoals(weekGoals, oldWeekStartsOn, newWeekStartsOn) {
@@ -877,13 +1083,7 @@ async function importBackupFile(file) {
     const incoming = parseBackupObject(JSON.parse(text));
     const mode = $('#importMode').value;
     if (mode === 'replace' && !confirm('現在の記録をバックアップ内容で置き換えます。続けますか？')) return;
-    if (db) {
-      try { await createSnapshotInternal('読込前'); } catch {}
-    }
-    state = mode === 'replace' ? incoming : mergeStates(state, incoming);
-    state.meta.updatedAt = new Date().toISOString();
-    await flushSave();
-    renderView(currentView);
+    await applyBackupData(incoming, mode);
     showToast(mode === 'replace' ? 'バックアップで置き換えました' : 'バックアップを追加・更新しました');
   } catch (err) {
     console.error(err);
@@ -897,14 +1097,10 @@ async function restoreSnapshot(key) {
   if (!confirm('この復元ポイントの内容に戻します。現在の状態も復元前ポイントとして保存します。続けますか？')) return;
   try {
     // Read the requested snapshot first. Creating the pre-restore point can prune the oldest generation.
-    const snap = await dbGet(key);
+    const snap = key === RECOVERY_KEY ? JSON.parse(localStorage.getItem(RECOVERY_KEY) || 'null') : await dbGet(key);
     if (!snap?.state || !isValidState(snap.state)) throw new Error('復元ポイントが壊れています。');
     const restoreState = normalizeState(snap.state);
-    await createSnapshotInternal('復元前');
-    state = restoreState;
-    state.meta.updatedAt = new Date().toISOString();
-    await flushSave();
-    renderSettings();
+    await applyBackupData(restoreState, 'replace');
     showToast('復元ポイントから戻しました');
   } catch (err) {
     alert(`復元に失敗しました。\n${err.message || err}`);
@@ -1049,6 +1245,9 @@ function bindStaticEvents() {
   $('#importBackup').addEventListener('change', e => importBackupFile(e.target.files?.[0]));
   $('#requestPersistentStorage').addEventListener('click', requestPersistentStorage);
   $('#updateApp').addEventListener('click', updateApp);
+  $('#saveGoogleBackup').addEventListener('click', () => runCloudBackup('save'));
+  $('#loadGoogleBackup').addEventListener('click', () => runCloudBackup('load'));
+  $('#retryGoogleBackup').addEventListener('click', prepareCloudBackup);
   $('#createSnapshot').addEventListener('click', async () => {
     try { await createSnapshotInternal('手動'); await flushSave(); await renderSettings(); showToast('復元ポイントを作成しました'); }
     catch { showToast('復元ポイントを作成できませんでした'); }
@@ -1057,7 +1256,10 @@ function bindStaticEvents() {
 
   window.addEventListener('beforeunload', () => {
     // Synchronous mirror gives the last keystrokes an additional chance to survive a quick tab close.
-    if (state) { state.meta.updatedAt = new Date().toISOString(); writeShadow(state); }
+    if (state && !backupApplication) {
+      state.meta.updatedAt = new Date(Math.max(Date.now(), updatedMs(state) + 1)).toISOString();
+      writeShadow(state);
+    }
   });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && state) flushSave(); });
 }

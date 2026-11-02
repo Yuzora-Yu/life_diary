@@ -71,3 +71,37 @@ python3 -m http.server 8000
 旧版のキャッシュが強く残って更新できない端末では、`/life_diary/update.html` を一度開いてください。このページはアプリ用 Cache Storage と Service Worker だけを整理して最新版を開き直します。IndexedDB / localStorage の記録データは削除しません。
 
 リリース時は `app.js` の `APP_VERSION` と `sw.js` の `CACHE_NAME` を更新してください。`index.html` と `sw.js` に付けている `app.js` / `styles.css` のバージョンクエリも同じ版へ合わせます。
+
+## v1.3.0 配色とGoogle Driveバックアップ
+
+- メインカラーは `#FFFF14`。背景、枠線、入力欄の強調もレモンイエロー系へ統一。
+- 設定画面にGoogle Driveへの保存・読込を追加。記録・週目標・設定を既存のJSONバックアップ形式で扱います。
+- 保存先は `マイドライブ / こもれび記録 Backups / komorebi-backup.json`。最新の1ファイルを明示操作で更新し、保存後に読み戻して一致を確認します。Prisma Abyssとは別のフォルダ・ファイル識別子を使用します。
+- 読込は追加・更新または置き換えを選べます。同じ日付はバックアップを優先し、週の開始曜日の変更も既存のルールで引き継ぎます。読込前の復元ポイント、端末への保存と読み戻し、失敗時の差し戻しを行います。IndexedDBが使えない場合はlocalStorageへ読込前の状態を保管します。
+- Google認証は保存・読込ボタンを押した時だけ開始します。要求権限は `drive.file` のみ。Gmail・メールアドレス・プロフィールは取得せず、アクセストークンは操作中のメモリだけに保持します。記録はブラウザーとGoogle Driveの間で直接送受信します。
+
+### Google連携の有効化
+
+現在はユーザーの希望により `index.html` の `google-drive-client-id` は空欄です。ボタンは無効で、Googleのライブラリ取得・認証・Drive通信も行いません。JSONファイルへの出力・読込は引き続き利用できます。
+
+公開先を決めた後、Google CloudでDrive APIを有効にし、Web用OAuthクライアントの「承認済みのJavaScript生成元」に公開先のoriginを登録します。`https://yu-zora.com/life_diary/` なら登録する値は `https://yu-zora.com` です。Prisma Abyssと同じクライアントを使う場合も、このアプリのバックアップは固有のフォルダと識別子で区別します。
+
+取得した公開クライアントIDを設定します。クライアントシークレットは不要です。
+
+```html
+<meta name="google-drive-client-id" content="取得した公開クライアントID.apps.googleusercontent.com">
+```
+
+HTTPS、または許可した開発用localhostで配信します。設定画面で認証ライブラリを準備し、保存・読込操作ごとにGoogleアカウントを選択します。認証拒否、キャンセル、通信失敗では勝手に再認証しません。Googleへの通信は30秒、認証準備は20秒、アカウント選択は120秒で打ち切ります。multipart方式のため、約5MBを超えるバックアップはJSONファイルへの出力をご利用ください。
+
+設定の仕様は [Google Identity Services](https://developers.google.com/identity/oauth2/web/guides/get-google-api-clientid)、[OAuth Token Model](https://developers.google.com/identity/oauth2/web/guides/use-token-model)、[Drive APIの権限](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)、[ファイルのアップロード](https://developers.google.com/workspace/drive/api/guides/manage-uploads)を参照してください。
+
+### URLを移すときの記録の引き継ぎ
+
+IndexedDBとlocalStorageは配信元ごとに分かれるため、別のoriginへ移しただけでは端末内の記録は自動表示されません。移行前のURLで「バックアップ出力」し、新しいURLでそのJSONを読み込むと引き継げます。旧URLでの出力を終える前に、ブラウザーの保存データを削除しないでください。
+
+Google連携の有効化後は、同じGoogle OAuthクライアント・同じGoogleアカウントを使用し、新しい配信元もGoogle側の許可先に登録すると、Driveのバックアップから引き継げます。公開先を変える前にJSONファイルにも出力しておくと、Google設定に依存せず移せます。
+
+### 検証
+
+`node --test tests/backup.test.cjs` でGoogle認証・Drive通信を模擬した回帰検査を実行できます。実Googleアカウントでの送受信確認は、クライアントIDを設定した公開先で行います。

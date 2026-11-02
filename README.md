@@ -105,3 +105,20 @@ Google連携の有効化後は、同じGoogle OAuthクライアント・同じGo
 ### 検証
 
 `node --test tests/backup.test.cjs` でGoogle認証・Drive通信を模擬した回帰検査を実行できます。実Googleアカウントでの送受信確認は、クライアントIDを設定した公開先で行います。
+
+## yu-zora.comでの配信
+
+配信先は `https://yu-zora.com/tools/life_diary/`、専用Workerは `yu-zora-life-diary` です。末尾のスラッシュがないURLは正規URLへ転送します。アプリのソースはこのリポジトリで管理し、配信用ファイルは `scripts/build.mjs` が `dist/tools/life_diary/` へ生成します。リポジトリ、テスト、開発用設定は配信しません。
+
+Node.js 22以降と、対象CloudflareアカウントでのWrangler認証を使います。
+
+```bash
+npm ci
+npm run deploy
+```
+
+`npm run deploy` はバックアップ・配信設定の検査後にビルドし、指定した2つのルートだけを更新します。GitHubへのpushだけではCloudflareの配信は更新されません。アップデート時は上記の配信操作も行ってください。Google連携の設定は引き続き空欄です。
+
+サイト内のナビゲーション、TOOLS一覧、更新案内、サイトマップへの掲載は行っていません。
+
+404の共通処理は `Yuzora-Yu/yu-zora-main` の `worker/shared-not-found.mjs` が正本です。`worker/shared-404/` は同リポジトリの `scripts/sync-shared-404.mjs` により生成し、直接編集しません。URLの登録は内部用の `config/shared-404-consumers.json` で管理します。

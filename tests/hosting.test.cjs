@@ -19,13 +19,18 @@ test('Canonical app URL adds the trailing slash and preserves query parameters',
 test('App requests resolve only inside the mounted asset directory', async () => {
   const {default:worker} = await workerPromise;
   const received = [];
-  const env = {ASSETS:{fetch(request){received.push(new URL(request.url));return new Response('asset');}}};
+  const portalRequests = [];
+  const env = {
+    ASSETS:{fetch(request){received.push(new URL(request.url));return new Response('asset');}},
+    PORTAL:{fetch(request){portalRequests.push(request.url);return new Response('portal', {status:404});}}
+  };
   await worker.fetch(new Request(base + '/'), env);
   await worker.fetch(new Request(base + '/sw.js?v=7'), env);
   assert.equal(received[0].pathname, '/tools/life_diary/index.html');
   assert.equal(received[1].pathname, '/tools/life_diary/sw.js');
   assert.equal(received[1].search, '?v=7');
   assert.equal((await worker.fetch(new Request(base + '-other/'), env)).status, 404);
+  assert.equal(portalRequests[0], base + '-other/');
   assert.equal((await worker.fetch(new Request(base + '/', {method:'POST'}), env)).status, 405);
   assert.equal(received.length, 2);
 });
@@ -50,7 +55,8 @@ test('Deployment includes the complete offline shell without repository or test 
 
 test('Hosting owns only the requested URL and retains the canonical shared error policy', () => {
   const config = JSON.parse(fs.readFileSync(path.join(root, 'wrangler.jsonc'), 'utf8'));
-  assert.deepEqual(config.routes.map(route => route.pattern), ['yu-zora.com/tools/life_diary', 'yu-zora.com/tools/life_diary/*']);
+  assert.deepEqual(config.routes.map(route => route.pattern), ['yu-zora.com/tools/life_diary*']);
+  assert(config.services.some(service => service.binding === 'PORTAL' && service.service === 'yu-zora-main'));
   assert.equal(config.workers_dev, false);
   assert.equal(config.preview_urls, false);
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'worker/shared-404/source.json'), 'utf8'));

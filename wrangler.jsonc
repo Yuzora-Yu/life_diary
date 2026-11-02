@@ -1,5 +1,8 @@
 {
-  "services": [{"binding":"YU_ZORA_ERROR_PAGES","service":"yu-zora-main"}],
+  "services": [
+    { "binding": "YU_ZORA_ERROR_PAGES", "service": "yu-zora-main" },
+    { "binding": "PORTAL", "service": "yu-zora-main" }
+  ],
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "yu-zora-life-diary",
   "account_id": "7e10da8ec857bed20f4b1010952279dd",
@@ -15,8 +18,7 @@
     "not_found_handling": "none"
   },
   "routes": [
-    { "pattern": "yu-zora.com/tools/life_diary", "zone_name": "yu-zora.com" },
-    { "pattern": "yu-zora.com/tools/life_diary/*", "zone_name": "yu-zora.com" }
+    { "pattern": "yu-zora.com/tools/life_diary*", "zone_name": "yu-zora.com" }
   ],
   "observability": { "enabled": true }
 }
